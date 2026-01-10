@@ -1,3 +1,5 @@
+# [PANPTIC]
+
 ## [SK-PANOPTIC-1] Use BytesMask for more efficient storage
 
 **Description:** `BytesMasking` is a technique to pack mulitple values into a single storage slot(usually taking uint256 -> 32 bytes == 256 bits) to save gas. instead of using seperate storage slots for each variable (such us struct)

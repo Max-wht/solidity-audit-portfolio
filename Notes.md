@@ -321,11 +321,9 @@ function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
 
 - **TWAP 价格**
 
-  - Token X 在时间区间 i 到 k 的时间加权平均价格
+  - Token X 在时间区间 i 到 k 的时间加权平均价格?
     $$
-    \text{TWAP}_X(T_k, T_n)
-    =
-    \frac{\sum\limits_{i=k}^{n-1} \Delta T_i \, P_i}{T_n - T_k}
+    \text{TWAP}_X(T_k, T_n) = \frac{\sum\limits_{i=k}^{n-1} \Delta T_i \, P_i}{T_n - T_k}
     $$
 
 <details>
@@ -348,7 +346,7 @@ function _update(uint balance0, uint balance1, uint112 _reserve0, uint112 _reser
     }
 ```
 
-</details>
+​	</details>
 
 <details>
 <summary>💹 How to use TWAP in your dapp</summary>

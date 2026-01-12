@@ -1,3 +1,76 @@
+# [Basic]
+
+### [B-1] Etherscan::Transaction
+
+**Description** 对于ETH来说，区分交易的类别是很重要的。
+
+#### [Transaction type classification]
+
+- **🛜Type0 [Legacy Transaction]**
+
+  最早的以太坊交易形式，使用 **单一 Gas Price**，没有 Base Fee / Priority Fee 的概念，手续费 = `Gas Used × Gas Price`，现在仍然**兼容**，但不推荐使用。这也是很多链下服务出bug的一个点，协议太老了，不适配新协议。下面的表格着重看gasPrice和gasLimit
+
+  | 字段     | 说明          |
+  | -------- | ------------- |
+  | gasPrice | 固定 gas 单价 |
+  | gasLimit | Gas 上限      |
+  | nonce    | 交易序号      |
+  | to       | 接收地址      |
+  | value    | ETH 数量      |
+  | data     | 合约数据      |
+
+- 🛜 **Type1 [Access List Transaction (EIP-2930)]**
+
+  核心概念是AccessList，这个会直接声明要访问的数据
+
+  ```yaml
+  [
+    {
+      address: 0xContractA,
+      storageKeys: [slot1, slot2, ...]
+    },
+    {
+      address: 0xContractB,
+      storageKeys: [...]
+    }
+  ]
+  
+  ```
+
+  
+
+- 🛜 **Type 2：EIP-1559 Transaction (主流)** 
+
+  引入 **Base Fee（销毁）**，引入 **Priority Fee（矿工小费）**，自动退还多余 Gas
+
+  ```js
+  effectiveGasPrice =
+  min(
+    maxFeePerGas
+    baseFee + maxPriorityFeePerGas
+  )
+  ```
+
+  | 字段                 | 含义                 |
+  | -------------------- | -------------------- |
+  | maxFeePerGas         | 你愿意支付的最高 Gas |
+  | maxPriorityFeePerGas | 给矿工的小费         |
+  | baseFee              | 网络自动决定         |
+
+  相当于原来的`gasPrice`被拆分成了`maxFeePerGas`和`maxPrioityFeePerGas`，实际的gas Fee
+
+- 🛜 **Type 3：Blob Transaction（EIP-4844 / Proto-Danksharding）**
+
+  2024年引入，面向layer2，数据放在blob中，隔一段时间主网会删除Blob
+
+  Rollup（如 Arbitrum、Optimism）提交数据，数据放在 **Blob** 中，而不是 calldata，极低的数据成本，不直接参与 EVM 执行，专为扩容设计。给 Rollup（如 Arbitrum、Optimism）提交数据，数据放在 **Blob** 中，而不是 calldata。极低的数据成本，不直接参与 EVM 执行，专为扩容设计
+
+#### 
+
+
+
+
+
 # [PANPTIC]
 
 ### [SK-PANOPTIC-1] Use BytesMask for more efficient storage
@@ -94,6 +167,10 @@ assembly{
 
 ## Uniswap V2
 
+# Uniswap Introduction
+
+## Uniswap V2
+
 ### [UNIV2-1] 为什么需要两个 codebase？
 
 **Discription:** uniswap V2 有两个仓库，`v2-core`和`v2-periphery`。区分二者的重点在于面向对象的不同。v2-core 是核心，里面包含了 pool 的创建，token swap 逻辑，其中的 function 普通用户是用不上的。v2-periphery 专门用用来与用户交互。
@@ -106,7 +183,6 @@ assembly{
 - swapTokenForExactToken() 目的是通过 exactOutput -> 计算出 calculated input，然后交易。
 
 <details>
-
 <summary>💹Swap?TokenFor?Token</summary>
 
 ```js
@@ -229,3 +305,221 @@ function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data)
 </details>
 
 由此,swap 的逻辑简单梳理了一遍
+
+### [UNIV2-3] TWAP (time weight everage price) in UniswapV2
+
+**Discription:** 在使用 Uniswap 这种链上 Oracle 最为 price 来源的时候，很容易(100%)会受到攻击，原因就在于 Uniswap 的价格太好操控了，任何一个人做 FlashLoan 就可以让价格波动很大。由此 Uniswap 提供`TWAP`(time weight everage price)来防止价格波动。注意，TWAP 价格和现货价格是两个东西。
+
+**Math:**
+
+- **Spot Price 现货价格(AMM)**
+
+  - Token X 以 Token Y 计价的现货价格:
+    $$
+    P\_{X/Y} = \frac{Y}{X}
+    $$
+
+- **TWAP 价格**
+
+  - Token X 在时间区间 i 到 k 的时间加权平均价格
+    $$
+    \text{TWAP}_X(T_k, T_n)
+    =
+    \frac{\sum\limits_{i=k}^{n-1} \Delta T_i \, P_i}{T_n - T_k}
+    $$
+
+<details>
+<summary>💹 _update in pair</summary>
+
+```js
+function _update(uint balance0, uint balance1, uint112 _reserve0, uint112 _reserve1) private {
+        require(balance0 <= uint112(-1) && balance1 <= uint112(-1), 'UniswapV2: OVERFLOW');
+        uint32 blockTimestamp = uint32(block.timestamp % 2 ** 32);
+        uint32 timeElapsed = blockTimestamp - blockTimestampLast; // overflow is desired
+        if (timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
+            // * never overflows, and + overflow is desired
+            price0CumulativeLast += uint(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) * timeElapsed;
+            price1CumulativeLast += uint(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) * timeElapsed;
+        }
+        reserve0 = uint112(balance0);
+        reserve1 = uint112(balance1);
+        blockTimestampLast = blockTimestamp;
+        emit Sync(reserve0, reserve1);
+    }
+```
+
+</details>
+
+<details>
+<summary>💹 How to use TWAP in your dapp</summary>
+
+```js
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.4 <0.9;
+
+import {IUniswapV2Pair} from "../../../src/interfaces/uniswap-v2/IUniswapV2Pair.sol";
+import {FixedPoint} from "../../../src/uniswap-v2/FixedPoint.sol";
+
+// Modified from https://github.com/Uniswap/v2-periphery/blob/master/contracts/examples/ExampleOracleSimple.sol
+// Do not use this contract in production
+contract UniswapV2Twap {
+    using FixedPoint for *;
+
+    // Minimum wait time in seconds before the function update can be called again
+    // TWAP of time > MIN_WAIT
+    uint256 private constant MIN_WAIT = 300;
+
+    IUniswapV2Pair public immutable pair;
+    address public immutable token0;
+    address public immutable token1;
+
+    // Cumulative prices are uq112x112 price * seconds
+    uint256 public price0CumulativeLast;
+    uint256 public price1CumulativeLast;
+    // Last timestamp the cumulative prices were updated
+    uint32 public updatedAt;
+
+    // TWAP of token0 and token1
+    // range: [0, 2**112 - 1]
+    // resolution: 1 / 2**112
+    // TWAP of token0 in terms of token1
+    FixedPoint.uq112x112 public price0Avg;
+    // TWAP of token1 in terms of token0
+    FixedPoint.uq112x112 public price1Avg;
+
+    // Exercise 1
+    constructor(address _pair) {
+        // 1. Set pair contract from constructor input
+        pair = IUniswapV2Pair(_pair);
+        // 2. Set token0 and token1 from pair contract
+        token0 = pair.token0();
+        token1 = pair.token1();
+        // 3. Store price0CumulativeLast and price1CumulativeLast from pair contract
+        price0CumulativeLast = pair.price0CumulativeLast();
+        price1CumulativeLast = pair.price1CumulativeLast();
+        // 4. Call pair.getReserve to get last timestamp the reserves were updated
+        (, , updatedAt) = pair.getReserves();
+        //    and store it into the state variable updatedAt
+    }
+
+    // Exercise 2
+    // Calculates cumulative prices up to current timestamp
+    //@note 这个函数计算并返回截止到当前时间戳的累积价格，用于后续计算时间加权平均价格。
+    function _getCurrentCumulativePrices()
+        internal
+        view
+        returns (uint256 price0Cumulative, uint256 price1Cumulative)
+    {
+        // 1. Get latest cumulative prices from the pair contract
+        price0Cumulative = pair.price0CumulativeLast();
+        price1Cumulative = pair.price1CumulativeLast();
+        // If current block timestamp > last timestamp reserves were updated,
+        // calculate cumulative prices until current time.
+        // Otherwise return latest cumulative prices retrieved from the pair contract.
+
+        // 2. Get reserves and last timestamp the reserves were updated from
+        //    the pair contract
+        (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast) = pair
+            .getReserves();
+
+        // 3. Cast block.timestamp to uint32, and update the timestamp of the last update
+        uint32 blockTimestamp = uint32(block.timestamp);
+        if (blockTimestampLast != blockTimestamp) {
+            // 4. Calculate elapsed time
+            uint32 dt = blockTimestamp - blockTimestampLast;
+
+            // Addition overflow is desired
+            unchecked {
+                // 5. Add spot price * elapsed time to cumulative prices.
+                //    - Use FixedPoint.fraction to calculate spot price.
+                //    - FixedPoint.fraction returns UQ112x112, so cast it into uint256.
+                //    - Multiply spot price by time elapsed
+                price0Cumulative +=
+                    uint256(FixedPoint.fraction(reserve1, reserve0)._x) *
+                    dt;
+                price1Cumulative +=
+                    uint256(FixedPoint.fraction(reserve0, reserve1)._x) *
+                    dt;
+            }
+        }
+    }
+
+    // Exercise 3
+    // Updates cumulative prices
+    function update() external {
+        // 1. Cast block.timestamp to uint32
+        uint32 blockTimestamp = uint32(block.timestamp);
+        // 2. Calculate elapsed time since last time cumulative prices were
+        //    updated in this contract
+        uint32 dt = blockTimestamp - updatedAt;
+        // 3. Require time elapsed >= MIN_WAIT
+        require(dt >= MIN_WAIT, "InsufficientTimeElapsed");
+
+        // 4. Call the internal function _getCurrentCumulativePrices to get
+        //    current cumulative prices
+        (
+            uint256 price0Cumulative,
+            uint256 price1Cumulative
+        ) = _getCurrentCumulativePrices();
+
+        // Overflow is desired, casting never truncates
+        // https://docs.uniswap.org/contracts/v2/guides/smart-contract-integration/building-an-oracle
+        // Subtracting between two cumulative price values will result in
+        // a number that fits within the range of uint256 as long as the
+        // observations are made for periods of max 2^32 seconds, or ~136 years
+        unchecked {
+            // 5. Calculate TWAP price0Avg and price1Avg
+            //    - TWAP = (current cumulative price - last cumulative price) / dt
+            //    - Cast TWAP into uint224 and then into FixedPoint.uq112x112
+            price0Avg = FixedPoint.uq112x112(
+                uint224(price0Cumulative - price0CumulativeLast) / dt
+            );
+            price1Avg = FixedPoint.uq112x112(
+                uint224(price1Cumulative - price1CumulativeLast) / dt
+            );
+        }
+
+        // 6. Update state variables price0CumulativeLast, price1CumulativeLast and updatedAt
+        price0CumulativeLast = price0Cumulative;
+        price1CumulativeLast = price1Cumulative;
+        updatedAt = blockTimestamp;
+    }
+
+    // Exercise 4
+    // Returns the amount out corresponding to the amount in for a given token
+    function consult(
+        address tokenIn,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut) {
+        // 1. Require tokenIn is either token0 or token1
+        require(tokenIn == token0 || tokenIn == token1, "InvalidToken");
+        // 2. Calculate amountOut
+        //    - amountOut = TWAP of tokenIn * amountIn
+        //    - Use FixePoint.mul to multiply TWAP of tokenIn with amountIn
+        //    - FixedPoint.mul returns uq144x112, use FixedPoint.decode144 to return uint144
+        if (tokenIn == token0) {
+            // Example
+            //   token0 = WETH
+            //   token1 = USDC
+            //   price0Avg = avg price of WETH in terms of USDC = 2000 USDC / 1 WETH
+            //   tokenIn = WETH
+            //   amountIn = 2
+            //   amountOut = price0Avg * amountIn = 4000 USDC
+            amountOut = FixedPoint.mul(price0Avg, amountIn).decode144();
+        } else {
+            amountOut = FixedPoint.mul(price1Avg, amountIn).decode144();
+        }
+    }
+}
+```
+
+</details>
+
+## Uniswap V3
+
+
+
+
+
+
+
